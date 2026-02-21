@@ -52,7 +52,11 @@ impl DaemonState {
     }
 
     fn log_usage(&mut self, app: &AppUsage, duration: i64) -> Result<()> {
+<<<<<<< HEAD
         if duration < 30 { return Ok(()); } // 30s grace period
+=======
+        if duration < self.config.general.grace_period as i64 { return Ok(()); }
+>>>>>>> 2710bb5 (Version 1.0.1: minor fixes and added the option to configure grace period)
         
         self.db.execute(
             "INSERT INTO usage_log (app_class, window_title, start_timestamp, duration) VALUES (?1, ?2, ?3, ?4)",

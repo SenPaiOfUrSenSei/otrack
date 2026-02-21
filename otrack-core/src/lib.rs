@@ -14,6 +14,10 @@ pub struct Config {
 pub struct GeneralConfig {
     pub database_path: String,
     pub idle_timeout: u64, // seconds
+<<<<<<< HEAD
+=======
+    pub grace_period: u64, // seconds
+>>>>>>> 2710bb5 (Version 1.0.1: minor fixes and added the option to configure grace period)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -38,6 +42,10 @@ impl Config {
                 general: GeneralConfig {
                     database_path: "~/.local/share/otrack/usage.db".into(),
                     idle_timeout: 300,
+<<<<<<< HEAD
+=======
+                    grace_period: 30,
+>>>>>>> 2710bb5 (Version 1.0.1: minor fixes and added the option to configure grace period)
                 },
                 blacklist: BlacklistConfig {
                     apps: vec!["discord".into(), "slack".into(), "spotify".into()],
