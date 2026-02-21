@@ -3,7 +3,7 @@ use otrack_core::{Config, DaemonRequest, DaemonResponse, SOCKET_PATH};
 use std::sync::{Arc, Mutex};
 use tokio::net::UnixListener;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, Timelike, Datelike};
 use hyprland::event_listener::EventListener;
 use std::time::Duration;
 use tokio::signal::unix::{signal, SignalKind};
@@ -52,11 +52,7 @@ impl DaemonState {
     }
 
     fn log_usage(&mut self, app: &AppUsage, duration: i64) -> Result<()> {
-<<<<<<< HEAD
-        if duration < 30 { return Ok(()); } // 30s grace period
-=======
         if duration < self.config.general.grace_period as i64 { return Ok(()); }
->>>>>>> 2710bb5 (Version 1.0.1: minor fixes and added the option to configure grace period)
         
         self.db.execute(
             "INSERT INTO usage_log (app_class, window_title, start_timestamp, duration) VALUES (?1, ?2, ?3, ?4)",
@@ -106,7 +102,7 @@ async fn handle_connection(mut stream: tokio::net::UnixStream, state: SharedStat
                 let mut stmt = s.db.prepare(
                     "SELECT app_class, SUM(duration) as total 
                      FROM usage_log 
-                     WHERE date(start_timestamp) = date('now') 
+                     WHERE date(start_timestamp, 'localtime') = date('now', 'localtime') 
                      GROUP BY app_class 
                      ORDER BY total DESC 
                      LIMIT 5"
@@ -116,7 +112,7 @@ async fn handle_connection(mut stream: tokio::net::UnixStream, state: SharedStat
                 }).unwrap().filter_map(Result::ok).collect();
                 
                 let today_total: i64 = s.db.query_row(
-                    "SELECT COALESCE(SUM(duration), 0) FROM usage_log WHERE date(start_timestamp) = date('now')",
+                    "SELECT COALESCE(SUM(duration), 0) FROM usage_log WHERE date(start_timestamp, 'localtime') = date('now', 'localtime')",
                     [],
                     |row| row.get(0)
                 ).unwrap_or(0);
@@ -163,6 +159,20 @@ async fn main() -> Result<()> {
             tokio::time::sleep(Duration::from_secs(10)).await;
             let mut s = idle_state.lock().unwrap();
             let now = Local::now();
+
+            // Midnight Flush: If the day has changed, log current usage up to midnight and reset start time
+            if let Some(app) = s.current_app.as_mut() {
+                if app.start_time.date_naive() != now.date_naive() {
+                    if let Some(midnight) = now.with_hour(0).and_then(|t| t.with_minute(0)).and_then(|t| t.with_second(0)).and_then(|t| t.with_nanosecond(0)) {
+                        let duration = (midnight - app.start_time).num_seconds();
+                        if duration > 0 {
+                            let _ = s.log_usage(app, duration);
+                            app.start_time = midnight;
+                        }
+                    }
+                }
+            }
+
             let idle_threshold = s.config.general.idle_timeout as i64;
             
             if (now - s.last_activity).num_seconds() > idle_threshold {
