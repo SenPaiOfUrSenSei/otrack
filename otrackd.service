@@ -1,0 +1,11 @@
+[Unit]
+Description=Omarchy Tracker Pro Daemon
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/local/bin/otrackd
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

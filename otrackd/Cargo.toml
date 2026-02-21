@@ -1,0 +1,18 @@
+[package]
+name = "otrackd"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+otrack-core = { path = "../otrack-core" }
+tokio = { workspace = true }
+rusqlite = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+hyprland = { workspace = true }
+signal-hook = { workspace = true }
+signal-hook-tokio = { workspace = true }
+futures = { workspace = true }

@@ -1,0 +1,17 @@
+[package]
+name = "otrack"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+otrack-core = { path = "../otrack-core" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+comfy-table = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+chrono = { workspace = true }
+clap = { version = "4.5", features = ["derive"] }
