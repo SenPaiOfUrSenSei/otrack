@@ -160,17 +160,24 @@ async fn main() -> Result<()> {
             let mut s = idle_state.lock().unwrap();
             let now = Local::now();
 
-            // Midnight Flush: If the day has changed, log current usage up to midnight and reset start time
-            if let Some(app) = s.current_app.as_mut() {
+            // Midnight Flush: if the day has changed, log usage up to midnight and reset start time
+            if let Some(mut app) = s.current_app.take() {
                 if app.start_time.date_naive() != now.date_naive() {
-                    if let Some(midnight) = now.with_hour(0).and_then(|t| t.with_minute(0)).and_then(|t| t.with_second(0)).and_then(|t| t.with_nanosecond(0)) {
+                    // midnight = start of today (local time)
+                    if let Some(midnight) = now
+                        .with_hour(0).and_then(|t| t.with_minute(0))
+                        .and_then(|t| t.with_second(0))
+                        .and_then(|t| t.with_nanosecond(0))
+                    {
                         let duration = (midnight - app.start_time).num_seconds();
                         if duration > 0 {
-                            let _ = s.log_usage(app, duration);
+                            let _ = s.log_usage(&app, duration);
                             app.start_time = midnight;
                         }
                     }
                 }
+                // put it back (possibly with updated start_time)
+                s.current_app = Some(app);
             }
 
             let idle_threshold = s.config.general.idle_timeout as i64;
