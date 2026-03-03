@@ -1,11 +1,11 @@
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
+use chrono::{DateTime, Local, Timelike}; // removed Datelike, wasn't used
+use hyprland::event_listener::EventListener;
 use otrack_core::{Config, DaemonRequest, DaemonResponse, SOCKET_PATH};
 use std::sync::{Arc, Mutex};
-use tokio::net::UnixListener;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use chrono::{DateTime, Local, Timelike, Datelike};
-use hyprland::event_listener::EventListener;
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::UnixListener;
 use tokio::signal::unix::{signal, SignalKind};
 
 struct AppUsage {
@@ -21,9 +21,27 @@ struct DaemonState {
     focus_end_time: Option<DateTime<Local>>,
     is_idle: bool,
     last_activity: DateTime<Local>,
+
+    work_streak_start: Option<DateTime<Local>>,
+    work_alert_count: u64,
 }
 
 impl DaemonState {
+    fn notify_work_break(&self, minutes: u64) {
+        let message = format!(
+            "You have been working for {} minutes. Consider taking a break soon!",
+            minutes
+        );
+
+        // fire off the notify-send command with our two arguments and return the ExitStatus
+        tokio::spawn(async move {
+            let _ = tokio::process::Command::new("notify-send")
+                .arg("Otrack: Take a break!")
+                .arg(message)
+                .spawn();
+        });
+    }
+
     fn new(config: Config) -> Result<Self> {
         let db_path = config.db_path();
         if let Some(parent) = db_path.parent() {
@@ -40,7 +58,7 @@ impl DaemonState {
             )",
             [],
         )?;
-        
+
         Ok(DaemonState {
             config,
             db,
@@ -48,12 +66,18 @@ impl DaemonState {
             focus_end_time: None,
             is_idle: false,
             last_activity: Local::now(),
+
+            // Work alert tracking
+            work_streak_start: None,
+            work_alert_count: 0,
         })
     }
 
     fn log_usage(&mut self, app: &AppUsage, duration: i64) -> Result<()> {
-        if duration < self.config.general.grace_period as i64 { return Ok(()); }
-        
+        if duration < self.config.general.grace_period as i64 {
+            return Ok(());
+        }
+
         self.db.execute(
             "INSERT INTO usage_log (app_class, window_title, start_timestamp, duration) VALUES (?1, ?2, ?3, ?4)",
             (
@@ -72,8 +96,10 @@ type SharedState = Arc<Mutex<DaemonState>>;
 async fn handle_connection(mut stream: tokio::net::UnixStream, state: SharedState) -> Result<()> {
     let mut buf = vec![0u8; 1024];
     let n = stream.read(&mut buf).await?;
-    if n == 0 { return Ok(()); }
-    
+    if n == 0 {
+        return Ok(());
+    }
+
     let request: DaemonRequest = serde_json::from_slice(&buf[..n])?;
     let response = {
         let mut s = state.lock().unwrap();
@@ -81,7 +107,11 @@ async fn handle_connection(mut stream: tokio::net::UnixStream, state: SharedStat
             DaemonRequest::GetStatus => {
                 let now = Local::now();
                 let remaining = s.focus_end_time.map(|end| {
-                    if end > now { (end - now).num_seconds() as u64 } else { 0 }
+                    if end > now {
+                        (end - now).num_seconds() as u64
+                    } else {
+                        0
+                    }
                 });
                 DaemonResponse::Status {
                     active_app: s.current_app.as_ref().map(|a| a.app_class.clone()),
@@ -91,7 +121,8 @@ async fn handle_connection(mut stream: tokio::net::UnixStream, state: SharedStat
                 }
             }
             DaemonRequest::StartFocus { duration_mins } => {
-                s.focus_end_time = Some(Local::now() + chrono::Duration::minutes(duration_mins as i64));
+                s.focus_end_time =
+                    Some(Local::now() + chrono::Duration::minutes(duration_mins as i64));
                 DaemonResponse::Ok
             }
             DaemonRequest::StopFocus => {
@@ -99,18 +130,22 @@ async fn handle_connection(mut stream: tokio::net::UnixStream, state: SharedStat
                 DaemonResponse::Ok
             }
             DaemonRequest::GetReport => {
-                let mut stmt = s.db.prepare(
-                    "SELECT app_class, SUM(duration) as total 
+                let mut stmt =
+                    s.db.prepare(
+                        "SELECT app_class, SUM(duration) as total 
                      FROM usage_log 
                      WHERE date(start_timestamp, 'localtime') = date('now', 'localtime') 
                      GROUP BY app_class 
                      ORDER BY total DESC 
-                     LIMIT 5"
-                ).unwrap();
-                let top_apps: Vec<(String, u64)> = stmt.query_map([], |row| {
-                    Ok((row.get(0)?, row.get::<_, i64>(1)? as u64))
-                }).unwrap().filter_map(Result::ok).collect();
-                
+                     LIMIT 5",
+                    )
+                    .unwrap();
+                let top_apps: Vec<(String, u64)> = stmt
+                    .query_map([], |row| Ok((row.get(0)?, row.get::<_, i64>(1)? as u64)))
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .collect();
+
                 let today_total: i64 = s.db.query_row(
                     "SELECT COALESCE(SUM(duration), 0) FROM usage_log WHERE date(start_timestamp, 'localtime') = date('now', 'localtime')",
                     [],
@@ -124,7 +159,7 @@ async fn handle_connection(mut stream: tokio::net::UnixStream, state: SharedStat
             }
         }
     };
-    
+
     let response_json = serde_json::to_vec(&response)?;
     stream.write_all(&response_json).await?;
     Ok(())
@@ -134,7 +169,7 @@ async fn handle_connection(mut stream: tokio::net::UnixStream, state: SharedStat
 async fn main() -> Result<()> {
     let config = Config::load()?;
     let state = Arc::new(Mutex::new(DaemonState::new(config.clone())?));
-    
+
     // Unix Domain Socket Server
     let _ = std::fs::remove_file(SOCKET_PATH);
     let listener = UnixListener::bind(SOCKET_PATH)?;
@@ -160,21 +195,29 @@ async fn main() -> Result<()> {
             let mut s = idle_state.lock().unwrap();
             let now = Local::now();
 
-            // Midnight Flush: If the day has changed, log current usage up to midnight and reset start time
-            if let Some(app) = s.current_app.as_mut() {
+            // Midnight Flush: if the day has changed, log usage up to midnight and reset start time
+            if let Some(mut app) = s.current_app.take() {
                 if app.start_time.date_naive() != now.date_naive() {
-                    if let Some(midnight) = now.with_hour(0).and_then(|t| t.with_minute(0)).and_then(|t| t.with_second(0)).and_then(|t| t.with_nanosecond(0)) {
+                    // midnight = start of today (local time)
+                    if let Some(midnight) = now
+                        .with_hour(0)
+                        .and_then(|t| t.with_minute(0))
+                        .and_then(|t| t.with_second(0))
+                        .and_then(|t| t.with_nanosecond(0))
+                    {
                         let duration = (midnight - app.start_time).num_seconds();
                         if duration > 0 {
-                            let _ = s.log_usage(app, duration);
+                            let _ = s.log_usage(&app, duration);
                             app.start_time = midnight;
                         }
                     }
                 }
+                // put it back (possibly with updated start_time)
+                s.current_app = Some(app);
             }
 
             let idle_threshold = s.config.general.idle_timeout as i64;
-            
+
             if (now - s.last_activity).num_seconds() > idle_threshold {
                 if !s.is_idle {
                     s.is_idle = true;
@@ -184,36 +227,68 @@ async fn main() -> Result<()> {
                     }
                 }
             }
+
+            // ---- Screen-time alert notifications (opt-in) ----
+            let Some(interval) = s.config.general.work_alert_minutes.filter(|&m| m > 0) else {
+                // Disabled
+                s.work_streak_start = None;
+                s.work_alert_count = 0;
+                continue;
+            };
+
+            // if the user is idle, reset streak
+            if s.is_idle {
+                s.work_streak_start = None;
+                s.work_alert_count = 0;
+                continue;
+            }
+
+            // User is active (screen-time counting)
+            let start = s.work_streak_start.get_or_insert(now);
+            let elapsed_mins = (now - *start).num_minutes().max(0) as u64;
+
+            // Notify at interval, 2*interval, 3*interval, ad nauseam...
+            let next_mark = (s.work_alert_count + 1) * interval;
+            if elapsed_mins >= next_mark {
+                s.notify_work_break(elapsed_mins);
+                s.work_alert_count += 1;
+            }
         }
     });
 
     // Hyprland Event Listener
     let event_state = Arc::clone(&state);
     let mut event_listener = EventListener::new();
-    
+
     event_listener.add_active_window_changed_handler(move |data| {
         let mut s = event_state.lock().unwrap();
         let now = Local::now();
         s.last_activity = now;
         s.is_idle = false;
-        
+
         if let Some(prev) = s.current_app.take() {
             let duration = (now - prev.start_time).num_seconds();
             let _ = s.log_usage(&prev, duration);
         }
-        
+
         if let Some(window) = data {
             let app_class = window.class.clone();
             let window_title = window.title.clone();
-            
+
             if let Some(focus_end) = s.focus_end_time {
                 if now < focus_end && s.config.blacklist.apps.contains(&app_class) {
                     if s.config.blacklist.block_during_focus {
-                         let _ = hyprland::dispatch::Dispatch::call(hyprland::dispatch::DispatchType::CloseWindow(hyprland::dispatch::WindowIdentifier::Address(window.address.clone())));
+                        let _ = hyprland::dispatch::Dispatch::call(
+                            hyprland::dispatch::DispatchType::CloseWindow(
+                                hyprland::dispatch::WindowIdentifier::Address(
+                                    window.address.clone(),
+                                ),
+                            ),
+                        );
                     }
                 }
             }
-            
+
             s.current_app = Some(AppUsage {
                 app_class,
                 window_title,
@@ -227,12 +302,12 @@ async fn main() -> Result<()> {
     tokio::spawn(async move {
         let mut sigint = signal(SignalKind::interrupt()).unwrap();
         let mut sigterm = signal(SignalKind::terminate()).unwrap();
-        
+
         tokio::select! {
             _ = sigint.recv() => {},
             _ = sigterm.recv() => {},
         }
-        
+
         let mut s = signal_state.lock().unwrap();
         if let Some(app) = s.current_app.take() {
             let duration = (Local::now() - app.start_time).num_seconds();
@@ -242,7 +317,9 @@ async fn main() -> Result<()> {
     });
 
     println!("otrackd started");
-    event_listener.start_listener().context("Hyprland event listener failed")?;
-    
+    event_listener
+        .start_listener()
+        .context("Hyprland event listener failed")?;
+
     Ok(())
 }

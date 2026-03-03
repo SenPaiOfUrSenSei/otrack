@@ -1,7 +1,7 @@
+use anyhow::{Context, Result};
+use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use anyhow::{Result, Context};
-use directories::ProjectDirs;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -15,6 +15,9 @@ pub struct GeneralConfig {
     pub database_path: String,
     pub idle_timeout: u64, // seconds
     pub grace_period: u64, // seconds
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub work_alert_minutes: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -40,6 +43,7 @@ impl Config {
                     database_path: "~/.local/share/otrack/usage.db".into(),
                     idle_timeout: 300,
                     grace_period: 30,
+                    work_alert_minutes: None, // opt-in feature; default is off
                 },
                 blacklist: BlacklistConfig {
                     apps: vec!["discord".into(), "slack".into(), "spotify".into()],

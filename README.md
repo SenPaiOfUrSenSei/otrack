@@ -85,6 +85,51 @@ systemctl --user restart otrackd
 
 ---
 
+## 🧿 Eye-health and Repetitive Strain Injury (RSI) Safety
+
+Otrack includes optional screen-time reminders to help reduce eye strain and repetitive stress injuries caused by prolonged uninterrupted computer use.
+
+When enabled, Otrack will send a desktop notification after every **N minutes of continuous screen activity** (defined as time spent not idle). This can help encourage regular micro-breaks and reduce fatigue.
+
+### Enabling Screen-Time Alerts
+
+To enable reminders, add the following parameter to your `config.toml`:
+
+```toml
+[general]
+work_alert_minutes = 25
+```
+
+This will notify you every 25 minutes of continuous activity.
+
+> ⚠️ After modifying your configuration, you must restart the daemon for changes to take effect:
+
+```bash
+systemctl --user restart otrackd
+```
+
+If you do not restart the daemon, Otrack will continue using the previously loaded configuration.
+
+---
+
+### How It Works
+
+* Screen-time is measured based on Otrack’s existing idle detection.
+* Time resets when the user becomes idle (no activity for `idle_timeout` seconds).
+* Notifications are opt-in — if the parameter is not present, no reminders are sent.
+
+---
+
+## 🚧 TODO
+
+Planned improvements for enhanced health monitoring:
+
+* [ ] Update `otrack status` to display time worked since last idle
+* [ ] Add “time to next break” to the Waybar JSON output so users can visualize countdowns
+* [ ] Add optional toggle to restrict reminders to focus mode only
+
+---
+
 ## 💾 Persistence & Data
 
 - **Local Storage**: All data is saved to a SQLite database at `~/.local/share/otrack/usage.db`.
